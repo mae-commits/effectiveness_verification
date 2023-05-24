@@ -30,16 +30,25 @@ else:
         male_df[(~sample_rules) & (male_df.treatment == 0)],
         male_df[(~sample_rules) & (male_df.treatment == 1)].sample(frac=0.5, random_state=1)
     ], axis=0, ignore_index=True)
-    
-# 回帰分析の実行
-y = biased_df.spend # バイアスのあるデータ中での 'spend' 列のデータを被説明変数（目的変数）として抽出
-X = biased_df[['treatment','history']] # 共変量Xを定義
-X = sm.add_constant(X) # 定数項の追加
-model = sm.OLS(y, X) # 最小2乗法による回帰分析
-results = model.fit()
 
-# 分析結果のレポート（複数テーブル）
-summary = results.summary()
-# 推定されたパラメータの取り出し（目的の変数が含まれるテーブルの取り出し）
-biased_reg_coef = summary.tables[1]
+# RCTデータでの単回帰
+y = male_df.spend
+X = male_df[['treatment']]
+X = sm.add_constant(X)
+results = sm.OLS(y, X).fit()
+rct_reg_coef = results.summary().tables[1]
 
+# バイアスのあるデータでの単回帰
+y = biased_df.spend
+nonrct_X = biased_df[['treatment']]
+nonrct_X = sm.add_constant(nonrct_X)
+nonrct_results = sm.OLS(y, nonrct_X).fit()
+nonrct_reg_coef = nonrct_results.summary().tables[1]
+
+## バイアスのあるデータでの重回帰
+y = biased_df.spend
+# R lmではカテゴリ変数は自動的にダミー変数化されているのでそれを再現
+X = pd.get_dummies(biased_df[['treatment', 'recency', 'channel', 'history']], columns=['channel'], drop_first=True)
+X = sm.add_constant(X)
+results = sm.OLS(y, X).fit()
+nonrct_mreg_coef = results.summary().tables[1]
