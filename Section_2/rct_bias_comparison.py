@@ -48,7 +48,7 @@ nonrct_reg_coef = nonrct_results.summary().tables[1]
 ## バイアスのあるデータでの重回帰
 y = biased_df.spend
 # R lmではカテゴリ変数は自動的にダミー変数化されているのでそれを再現
-X = pd.get_dummies(biased_df[['treatment', 'recency', 'channel', 'history']], columns=['channel'], drop_first=True)
+X = pd.get_dummies(biased_df[['treatment', 'recency', 'channel', 'history']], columns=['channel'], drop_first=True, dtype=float)
 X = sm.add_constant(X)
 results = sm.OLS(y, X).fit()
 nonrct_mreg_coef = results.summary().tables[1]

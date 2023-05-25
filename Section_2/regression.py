@@ -42,4 +42,3 @@ results = model.fit()
 summary = results.summary()
 # 推定されたパラメータの取り出し（目的の変数が含まれるテーブルの取り出し）
 biased_reg_coef = summary.tables[1]
-
