@@ -28,11 +28,12 @@ biased_df = pd.concat([
     male_df[(~sample_rules) & (male_df.treatment == 1)].sample(frac=0.5, random_state=1)
 ], axis=0, ignore_index=True)
 
-# 傾向スコアの推定
-y = biased_df['treatment']
-X = pd.get_dummies(biased_df[['recency', 'channel', 'history']], columns=['channel'], drop_first=True, dtype=float)
+# 共変量のバランスを確認
 
-# 傾向スコアマッチング
+def calc_absolute_mean_difference(df):
+    # (treatment 群の平均 - control 群の平均) /全体の標準偏差
+    return ((df[df.treatment==1].drop('treatment', axis=1).mean() - (df[df.treatment==0].drop('treatment', axis=1).mean())) \
+        / df.drop('treatment', axis=1).std()).abs()
 
 def get_matched_dfs_using_propensity_score(X,y, random_state=0):
     # 傾向スコアを計算
@@ -93,6 +94,39 @@ def get_matched_dfs_using_propensity_score(X,y, random_state=0):
 
     return X.loc[matched_indices], y.loc[matched_indices]
 
+def get_ipw(X, y, random_state=0):
+    # 傾向スコアを計算
+    ps_model = LogisticRegression(solver='lbfgs', random_state=random_state).fit(X, y)
+    ps_score = ps_model.predict_proba(X)[:, 1]
+    all_df = pd.DataFrame({'treatment': y, 'ps_score': ps_score})
+    treatments =all_df.treatment.unique() # 介入が 0 or 1 の2値になっているかどうかを判断
+    if len(treatments) != 2:
+        print('2群のマッチングしかできません。2群は必ず[0, 1]で表現してください。')
+        raise ValueError
+    # group 1 for treatment == 1, group 2 for treatment == 0
+    group_1_df = all_df[all_df.treatment == 1].copy()
+    group_2_df = all_df[all_df.treatment == 0].copy()
+    # IPW を計算
+    group_1_df['weight'] = 1 / group_1_df.ps_score
+    group_2_df['weight'] = 1 / group_2_df.ps_score
+    # group 1, group 2 の weight の値を結合
+    weights = pd.concat([group_1_df, group_2_df]).sort_index()['weight'].values
+    return weights
+
+y = biased_df['treatment']
+X = pd.get_dummies(biased_df[['recency', 'channel', 'history']], columns=['channel'], drop_first=True, dtype=float)
+weights = get_ipw(X, y)
+
+# 重み付きデータでの効果の推定
+y = biased_df.spend
+X = biased_df.treatment
+X = sm.add_constant(X)
+results = sm.WLS(y, X, weights=weights).fit()
+coef = results.summary().tables[1]
+
+unadjusted_df = pd.get_dummies(biased_df[['treatment', 'recency', 'channel', 'history']], columns=['channel'],dtype=float)
+unadjusted_amd = calc_absolute_mean_difference(unadjusted_df)
+
 matchX, matchy  = get_matched_dfs_using_propensity_score(X, y)
 
 # マッチング後のデータで効果の推定
@@ -101,3 +135,27 @@ X = matchy
 X = sm.add_constant(X)
 results = sm.OLS(y, X).fit()
 coef = results.summary().tables[1]
+
+# 傾向スコアマッチング後の Absolute Mean Difference
+after_matching_df = pd.get_dummies(biased_df.loc[matchX.index][['treatment', 'recency', 'history', 'channel']], columns=['channel'], dtype=float)
+after_matching_amd = calc_absolute_mean_difference(after_matching_df)
+
+# IPW で重み付け後の Absolute Mean Difference
+# 重みのぶんレコードを増やして計算する
+after_weighted_df = pd.get_dummies(biased_df[['treatment', 'recency', 'channel', 'history']], columns=['channel'])
+weights_int = (weights * 100).astype(int)
+weighted_df = []
+for i, value in enumerate(after_weighted_df.values):
+    weighted_df.append(np.tile(value, (weights_int[i], 1)))
+weighted_df = np.concatenate(weighted_df).reshape(-1, 6)
+weighted_df = pd.DataFrame(weighted_df)
+weighted_df.columns = after_weighted_df.columns
+after_weighted_amd = calc_absolute_mean_difference(weighted_df)
+
+balance_df = pd.concat([
+    pd.DataFrame({'Absolute Mean Difference': unadjusted_amd, 'Sample': 'Unadjusted'}),
+    pd.DataFrame({'Absolute Mean Difference': after_matching_amd, 'Sample': 'Adjusted'})
+])
+fig = px.scatter(balance_df, x='Absolute Mean Difference', y=balance_df.index, color='Sample',
+                title='3.5 マッチングしたデータでの共変量のバランス')
+fig.show()
